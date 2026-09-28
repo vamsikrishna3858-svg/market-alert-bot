@@ -1,6 +1,7 @@
 import os
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time
+from zoneinfo import ZoneInfo
 
 TWELVE_API_KEY = os.environ["TWELVE_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
@@ -12,6 +13,55 @@ MARKETS = {
     "EUR/USD": "EURUSD",
     "USD/JPY": "USDJPY",
 }
+
+# =========================
+# SESSION SETTINGS - INDIA TIME
+# =========================
+
+# Asian Session
+ASIAN_START = time(5, 30)
+ASIAN_END = time(14, 30)
+
+# New York Session
+NY_START = time(17, 30)
+NY_END = time(2, 30)
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def is_allowed_session(candle_datetime):
+    """
+    Check whether the candle belongs to
+    Asian or New York trading session.
+    """
+
+    # Twelve Data datetime normally comes without timezone.
+    # Treat it as UTC.
+    try:
+        candle_time = datetime.fromisoformat(
+            candle_datetime.replace("Z", "+00:00")
+        )
+    except Exception:
+        candle_time = datetime.strptime(
+            candle_datetime, "%Y-%m-%d %H:%M:%S"
+        ).replace(tzinfo=timezone.utc)
+
+    # Convert to India time
+    india_time = candle_time.astimezone(IST)
+    current_time = india_time.time()
+
+    # Asian session
+    asian_session = (
+        ASIAN_START <= current_time <= ASIAN_END
+    )
+
+    # New York session crosses midnight
+    ny_session = (
+        current_time >= NY_START
+        or current_time <= NY_END
+    )
+
+    return asian_session or ny_session
 
 
 def get_candles(symbol):
@@ -45,6 +95,13 @@ def check_setup(symbol, name):
     current = candles[1]
     previous = candles[2]
 
+    # =========================
+    # SESSION CHECK
+    # =========================
+
+    if not is_allowed_session(current["datetime"]):
+        return None, current
+
     current_open = float(current["open"])
     current_close = float(current["close"])
     previous_open = float(previous["open"])
@@ -53,14 +110,14 @@ def check_setup(symbol, name):
     current_body = candle_body(current)
     previous_body = candle_body(previous)
 
-    # LONG: previous RED + current GREEN + current body bigger
+    # LONG
     long_setup = (
         previous_close < previous_open
         and current_close > current_open
         and current_body > previous_body
     )
 
-    # SHORT: previous GREEN + current RED + current body bigger
+    # SHORT
     short_setup = (
         previous_close > previous_open
         and current_close < current_open
@@ -107,10 +164,10 @@ def main():
                 )
 
                 send_telegram(message)
-
                 print(message)
+
             else:
-                print(f"{name}: No setup")
+                print(f"{name}: No setup / Outside session")
 
         except Exception as e:
             print(f"{name}: ERROR - {e}")
