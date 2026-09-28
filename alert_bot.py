@@ -117,7 +117,4 @@ def main():
 
 
 if __name__ == "__main__":
-    if name == "main":
-    send_telegram("🚨 TEST — Telegram alert bot is working!")
-    main()
     main()
