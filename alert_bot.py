@@ -19,7 +19,7 @@ def get_candles(symbol):
 
     params = {
         "symbol": symbol,
-        "interval": "30min",
+        "interval": "16min",
         "outputsize": 3,
         "apikey": TWELVE_API_KEY,
     }
