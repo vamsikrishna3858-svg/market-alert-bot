@@ -19,6 +19,8 @@ def get_candles(symbol):
         "symbol": symbol,
         "interval": "30min",
         "outputsize": 20,
+        "timezone": "UTC",
+        "order": "desc",
         "apikey": TWELVE_API_KEY,
     }
 
@@ -28,15 +30,46 @@ def get_candles(symbol):
     if "values" not in data:
         return []
 
-    return data["values"]
+    candles = data["values"]
+
+    # Make sure newest candle is first
+    candles.sort(
+        key=lambda x: x["datetime"],
+        reverse=True
+    )
+
+    return candles
 
 
 def check_setup(candles):
+
     if len(candles) < 3:
         return "NO DATA", None
 
-    current = candles[1]
-    previous = candles[2]
+    # UTC current time
+    now = datetime.now(timezone.utc)
+
+    closed_candles = []
+
+    for candle in candles:
+
+        candle_time = datetime.strptime(
+            candle["datetime"],
+            "%Y-%m-%d %H:%M:%S"
+        ).replace(tzinfo=timezone.utc)
+
+        # Candle must have completely finished
+        if candle_time < now:
+            closed_candles.append(candle)
+
+    if len(closed_candles) < 2:
+        return "NO DATA", None
+
+    # Latest CLOSED candle
+    current = closed_candles[0]
+
+    # Candle immediately before it
+    previous = closed_candles[1]
 
     current_open = float(current["open"])
     current_close = float(current["close"])
@@ -44,8 +77,13 @@ def check_setup(candles):
     previous_open = float(previous["open"])
     previous_close = float(previous["close"])
 
-    current_body = abs(current_close - current_open)
-    previous_body = abs(previous_close - previous_open)
+    current_body = abs(
+        current_close - current_open
+    )
+
+    previous_body = abs(
+        previous_close - previous_open
+    )
 
     # LONG
     if (
