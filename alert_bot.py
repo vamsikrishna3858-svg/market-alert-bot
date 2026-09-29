@@ -11,7 +11,6 @@ MARKETS = {
     "XAU/USD": "XAUUSD",
     "BTC/USD": "BTCUSD",
     "EUR/USD": "EURUSD",
-    "USD/JPY": "USDJPY",
 }
 
 # =========================
