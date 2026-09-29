@@ -2,38 +2,85 @@ import os
 import requests
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+
+# ============================================================
+# SETTINGS
+# ============================================================
 
 TWELVE_API_KEY = os.environ["TWELVE_API_KEY"]
+
+TIMEFRAME = "30min"
+
+# Fixed GMT+1 session timezone
+GMT_PLUS_1 = timezone(timedelta(hours=1))
+
+# ------------------------------------------------------------
+# SESSION TIMES — GMT+1
+# Change these ONLY if your TradingView Sessions indicator
+# uses different Tokyo / New York hours.
+# ------------------------------------------------------------
+
+TOKYO_START = 0
+TOKYO_END = 9
+
+NEW_YORK_START = 13
+NEW_YORK_END = 22
+
+# Closing-side wick tolerance
+# Example:
+# SHORT = lower wick must be <= 25% of candle body
+# LONG  = upper wick must be <= 25% of candle body
+WICK_TOLERANCE = 0.25
+
+
+# ============================================================
+# MARKETS
+# ============================================================
 
 MARKETS = {
     "XAUUSD": "XAU/USD",
     "BTCUSD": "BTC/USD",
     "EURUSD": "EUR/USD",
-}
+  }
 
+
+# ============================================================
+# GET CANDLES
+# ============================================================
 
 def get_candles(symbol):
+
     url = "https://api.twelvedata.com/time_series"
 
     params = {
         "symbol": symbol,
-        "interval": "30min",
+        "interval": TIMEFRAME,
         "outputsize": 20,
         "timezone": "UTC",
         "order": "desc",
         "apikey": TWELVE_API_KEY,
     }
 
-    response = requests.get(url, params=params, timeout=15)
-    data = response.json()
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            timeout=15
+        )
+
+        data = response.json()
+
+    except Exception:
+        return []
 
     if "values" not in data:
         return []
 
     candles = data["values"]
 
-    # Make sure newest candle is first
+    # Newest candle first
     candles.sort(
         key=lambda x: x["datetime"],
         reverse=True
@@ -42,127 +89,88 @@ def get_candles(symbol):
     return candles
 
 
-def check_setup(candles):
+# ============================================================
+# PARSE CANDLE TIME
+# ============================================================
 
-    if len(candles) < 3:
-        return "NO DATA", None
+def candle_datetime_utc(candle):
 
-    # UTC current time
+    return datetime.strptime(
+        candle["datetime"],
+        "%Y-%m-%d %H:%M:%S"
+    ).replace(tzinfo=timezone.utc)
+
+
+# ============================================================
+# CHECK WHETHER CANDLE IS FULLY CLOSED
+# ============================================================
+
+def get_closed_candles(candles):
+
     now = datetime.now(timezone.utc)
 
-    closed_candles = []
+    closed = []
 
     for candle in candles:
 
-        candle_time = datetime.strptime(
-            candle["datetime"],
-            "%Y-%m-%d %H:%M:%S"
-        ).replace(tzinfo=timezone.utc)
+        candle_time = candle_datetime_utc(candle)
 
-        # Candle must have completely finished
-        if candle_time < now:
-            closed_candles.append(candle)
+        # 30-minute candle must have completely finished.
+        #
+        # A candle timestamp represents its opening time.
+        # Therefore add 30 minutes before considering it closed.
 
-    if len(closed_candles) < 2:
-        return "NO DATA", None
+        candle_close_time = candle_time + timedelta(minutes=30)
 
-    # Latest CLOSED candle
-    current = closed_candles[0]
+        if candle_close_time <= now:
+            closed.append(candle)
 
-    # Candle immediately before it
-    previous = closed_candles[1]
+    return closed
 
-    current_open = float(current["open"])
-    current_close = float(current["close"])
 
-    previous_open = float(previous["open"])
-    previous_close = float(previous["close"])
+# ============================================================
+# SESSION CHECK — GMT+1
+# ============================================================
 
-    current_body = abs(
-        current_close - current_open
+def is_trading_session(candle):
+
+    utc_time = candle_datetime_utc(candle)
+
+    # Convert UTC → fixed GMT+1
+    session_time = utc_time.astimezone(GMT_PLUS_1)
+
+    hour = session_time.hour
+
+    # Tokyo
+    if TOKYO_START <= hour < TOKYO_END:
+        return "TOKYO"
+
+    # New York
+    if NEW_YORK_START <= hour < NEW_YORK_END:
+        return "NEW YORK"
+
+    return None
+
+
+# ============================================================
+# CANDLE INFORMATION
+# ============================================================
+
+def candle_data(candle):
+
+    candle_open = float(candle["open"])
+    candle_high = float(candle["high"])
+    candle_low = float(candle["low"])
+    candle_close = float(candle["close"])
+
+    body = abs(candle_close - candle_open)
+
+    upper_wick = candle_high - max(
+        candle_open,
+        candle_close
     )
 
-    previous_body = abs(
-        previous_close - previous_open
-    )
-
-    # LONG
-    if (
-        previous_close < previous_open
-        and current_close > current_open
-        and current_body > previous_body
-    ):
-        return "LONG", current
-
-    # SHORT
-    if (
-        previous_close > previous_open
-        and current_close < current_open
-        and current_body > previous_body
-    ):
-        return "SHORT", current
-
-    return "NO SETUP", current
-
-
-st.set_page_config(
-    page_title="Vamsi Trading Monitor",
-    page_icon="📊",
-    layout="wide"
-)
-
-st.title("📊 VAMSI TRADING MONITOR")
-st.caption("30-Minute Strategy • Monitoring Only • NO TRADE EXECUTION")
-
-st.divider()
-
-columns = st.columns(4)
-
-for column, (name, symbol) in zip(columns, MARKETS.items()):
-
-    with column:
-
-        candles = get_candles(symbol)
-
-        if not candles:
-            st.error(f"{name}\n\nNo data")
-            continue
-
-        signal, candle = check_setup(candles)
-
-        price = float(candles[0]["close"])
-
-        st.subheader(name)
-
-        st.metric(
-            "Current Price",
-            f"{price:.5f}"
-        )
-
-        if signal == "LONG":
-            st.success("🟢 LONG SETUP")
-
-        elif signal == "SHORT":
-            st.error("🔴 SHORT SETUP")
-
-        else:
-            st.info("⚪ NO SETUP")
-
-        if candle:
-            st.write(
-                f"Candle: {candle['datetime']}"
-            )
-
-st.divider()
-
-st.subheader("📋 Monitoring Status")
-
-st.write(
-    "🟢 System is monitoring markets\n\n"
-    "❌ Trade execution: DISABLED\n\n"
-    "📱 Telegram alerts: Existing bot\n\n"
-    "⏱️ Timeframe: 30 minutes"
-)
-
-if st.button("🔄 Refresh Market Data"):
-    st.rerun()
+    lower_wick = min(
+        candle_open,
+        candle_close
+    ) - candle_low
