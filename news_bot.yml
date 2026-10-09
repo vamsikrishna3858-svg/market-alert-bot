@@ -1,4 +1,69 @@
-name: VAMSI AI News Bot
+[09-10-2026 09:48] Vamsi CNC WORKS: name: VAMSI AI News Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Send a Telegram test message only"
+        required: true
+        type: boolean
+        default: false
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vamsi-ai-news-bot
+  cancel-in-progress: false
+
+jobs:
+  news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Get repository code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Test Telegram delivery
+        if: github.event_name == 'workflow_dispatch' && inputs.test
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python alert_bot.py --test
+
+      - name: Check market news
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.test)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python alert_bot.py
+
+      - name: Save duplicate-prevention state
+        if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.test))
+        run: |
+          if [ -f seen_news.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add seen_news.json
+            if ! git diff --cached --quiet; then
+              git commit -m "Update news bot history"
+              git push
+            fi
+          fi
+[09-10-2026 09:55] Vamsi CNC WORKS: name: VAMSI AI News Bot
 
 on:
   workflow_dispatch:
