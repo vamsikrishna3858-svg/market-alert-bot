@@ -1,45 +1,65 @@
-name: VAMSI Market News Bot
+name: VAMSI AI News Bot
 
 on:
-  schedule:
-    - cron: "*/10 * * * *"
-
   workflow_dispatch:
+    inputs:
+      test:
+        description: "Send a Telegram test message only"
+        required: true
+        type: boolean
+        default: false
+  schedule:
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: write
 
+concurrency:
+  group: vamsi-ai-news-bot
+  cancel-in-progress: false
+
 jobs:
-  news-bot:
+  news:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
-      - name: Checkout repository
+      - name: Get repository code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      - name: Run Market News Bot
+      - name: Test Telegram delivery
+        if: github.event_name == 'workflow_dispatch' && inputs.test
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python alert_bot.py --test
+
+      - name: Check market news
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.test)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python alert_bot.py
+
+      - name: Save duplicate-prevention state
+        if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.test))
         run: |
-          python alert_bot.py
-
-      - name: Save news history
-        run: |
-          git config user.name "VAMSI News Bot"
-          git config user.email "actions@github.com"
-
-          git add sent_news.txt
-
-          git diff --cached --quiet || git commit -m "Update news history"
-
-          git push
+          if [ -f seen_news.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add seen_news.json
+            if ! git diff --cached --quiet; then
+              git commit -m "Update news bot history"
+              git push
+            fi
+          fi
