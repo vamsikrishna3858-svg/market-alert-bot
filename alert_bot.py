@@ -1,123 +1,70 @@
-message = (
-        f"{header}\n\n"
-        f"📌 {article['title']}\n\n"
-        f"🎯 Markets: {markets}\n"
-        f"⚡ Impact: {article['impact']}\n"
-        f"📊 View: {article['bias']}\n"
-        f"🕐 {published}\n"
-        f"📰 Source: {article['source']}\n\n"
+def run_test():
+    telegram_send(
+        "✅ VAMSI AI NEWS BOT TEST SUCCESSFUL\n\n"
+        "Markets: XAUUSD, BTCUSD, EURUSD\n"
+        "News monitoring is configured.\n"
+        "This is a test message, not a trading signal."
     )
+    print("Telegram test message sent successfully.")
 
-    if article["summary"]:
-
-        message += (
-            f"💡 {shorten_summary(article['summary'])}\n\n"
-        )
-
-    message += (
-        f"🔗 {article['link']}\n\n"
-        f"⚠️ News information only — "
-        f"not a trading signal."
-    )
-
-    return message
-
-
-# ============================================================
-# SORT NEWS
-# ============================================================
-
-def sort_news(articles):
-
-    # HIGH impact first, then newest.
-    return sorted(
-        articles,
-        key=lambda article: (
-            0 if article["impact"] == "HIGH" else 1,
-            -article["published"].timestamp(),
-        ),
-    )
-
-
-# ============================================================
-# MAIN
-# ============================================================
 
 def main():
-
-    print("=" * 60)
-    print("VAMSI MARKET NEWS BOT")
-    print("=" * 60)
-
-    print("Fetching market news...")
-
-    articles = fetch_news()
-
-    print(
-        f"Found {len(articles)} relevant articles."
-    )
-
-    if not articles:
-
-        print("No relevant news found.")
-
-        # Optional status message.
-        send_telegram(
-            "📰 VAMSI MARKET NEWS BOT\n\n"
-            "No major XAUUSD / BTCUSD / EURUSD "
-            "market news found in the latest scan."
-        )
-
+    if "--test" in sys.argv:
+        run_test()
         return
 
-    sent_ids = load_sent_ids()
+    previous_state = load_state()
+    first_run = previous_state is None
+    seen = previous_state if previous_state is not None else set()
 
-    new_articles = []
-
-    for article in sort_news(articles):
-
-        if article["id"] in sent_ids:
-            continue
-
-        new_articles.append(article)
-
-    print(
-        f"New articles: {len(new_articles)}"
-    )
-
-    # Send only a limited number per run.
-    new_articles = new_articles[
-        :MAX_NEWS_PER_RUN
-    ]
-
-    for article in new_articles:
-
+    # Collect feeds before changing the saved state.
+    feeds = {}
+    for market, query in MARKETS.items():
         try:
+            feeds[market] = get_feed(market, query)
+            print(f"{market}: fetched {len(feeds[market])} articles")
+        except Exception as exc:
+            print(f"ERROR fetching {market}: {exc}")
+            raise
 
-            message = format_news(article)
+    new_seen = set(seen)
+    messages = []
 
-            send_telegram(message)
+    for market, entries in feeds.items():
+        unseen = [
+            entry for entry in entries
+            if article_id(entry) not in seen
+        ]
 
-            sent_ids.add(article["id"])
+        # First run sends only the newest article for each market,
+        # rather than flooding Telegram with old headlines.
+        limit = 1 if first_run else MAX_ARTICLES_PER_MARKET
 
-            print(
-                f"SENT: {article['title']}"
-            )
+        for entry in unseen[:limit]:
+            messages.append(format_article(market, entry))
 
-        except Exception as e:
+        for entry in entries:
+            new_seen.add(article_id(entry))
 
-            print(
-                f"TELEGRAM ERROR: {e}"
-            )
+    if not messages:
+        print("No new articles. Nothing to send.")
+    else:
+        for message in messages:
+            telegram_send(message)
+            print("Telegram alert sent.")
+            time.sleep(1)
 
-    save_sent_ids(sent_ids)
-
-    print("=" * 60)
-    print("NEWS SCAN COMPLETE")
-    print("=" * 60)
+    save_state(new_seen)
+    print(f"Finished. Sent {len(messages)} article(s).")
 
 
 if name == "main":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(f"FATAL ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+      
 
-  
+ 
+
